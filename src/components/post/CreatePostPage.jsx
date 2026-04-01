@@ -117,13 +117,10 @@ export default function CreatePostPage({ brands, onNavigate }) {
     }
   };
 
-  // Called when a text suggestion is applied from Brand Score
-  const handleApplyContent = (exampleText, targetChannels, suggestion) => {
+  // Called when a text suggestion is applied from Brand Score (receives LLM-improved content)
+  const handleApplyContent = (improvedContent, targetChannels, suggestion) => {
     targetChannels.forEach(ch => {
-      const current = getChannelContent(ch);
-      // Apply the suggestion as a channel override with the example appended
-      const improved = current + "\n\n" + exampleText;
-      setChannelOverrides(prev => ({ ...prev, [ch]: improved }));
+      setChannelOverrides(prev => ({ ...prev, [ch]: improvedContent }));
     });
   };
 
@@ -461,6 +458,7 @@ export default function CreatePostPage({ brands, onNavigate }) {
               onOpenSettings={() => { setRightTab("preview"); onNavigate("brand-identity"); }}
               onApplyContent={handleApplyContent}
               onApplyMedia={handleApplyMedia}
+              channelOverrides={channelOverrides}
             />
           )}
 

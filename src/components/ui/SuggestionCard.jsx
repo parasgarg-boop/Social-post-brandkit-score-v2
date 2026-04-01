@@ -4,7 +4,7 @@ import T from '../../theme/tokens';
 import Btn from './Btn';
 import { ChannelIcon } from '../../data/channels';
 
-export default function SuggestionCard({ s, verifyState, onVerify, onApply, channelFilter, appliedChannels }) {
+export default function SuggestionCard({ s, verifyState, onVerify, onApply, channelFilter, appliedChannels, applyingState }) {
   const [showDetail, setShowDetail] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
   const isPositive = s.type === "positive";
@@ -59,7 +59,7 @@ export default function SuggestionCard({ s, verifyState, onVerify, onApply, chan
             </div>
           </div>
           {/* Action buttons */}
-          {!isPositive && !allApplied && !isChecking && (
+          {!isPositive && !allApplied && !isChecking && !applyingState && (
             <div style={{ display: "flex", flexDirection: "column", gap: "4px", alignSelf: "flex-start", flexShrink: 0 }}>
               {canApply && onApply && (
                 <Btn variant="primary" size="sm" onClick={() => {
@@ -98,12 +98,21 @@ export default function SuggestionCard({ s, verifyState, onVerify, onApply, chan
               )}
             </div>
           )}
-          {isChecking && (
+          {/* Applying state: generating or verifying */}
+          {applyingState && (
+            <div style={{ alignSelf: "center", flexShrink: 0, padding: "4px 8px", display: "flex", alignItems: "center", gap: "6px" }}>
+              <RefreshCw size={14} color={T.blue} style={{ animation: "spin 1s linear infinite" }} />
+              <span style={{ fontSize: "11px", color: T.blue, fontWeight: 500 }}>
+                {applyingState === "generating" ? "Improving..." : "Verifying..."}
+              </span>
+            </div>
+          )}
+          {isChecking && !applyingState && (
             <div style={{ alignSelf: "center", flexShrink: 0, padding: "4px 8px" }}>
               <RefreshCw size={14} color={T.blue} style={{ animation: "spin 1s linear infinite" }} />
             </div>
           )}
-          {allApplied && (
+          {allApplied && !applyingState && (
             <div style={{ alignSelf: "center", display: "flex", alignItems: "center", gap: "3px", color: T.green, fontSize: "12px", fontWeight: 500, flexShrink: 0 }}>
               <Check size={14} /> Applied
             </div>

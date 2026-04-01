@@ -35,6 +35,81 @@ export const SUGGESTED_TOPICS = [
   "Complete outdoor transformation through design, installation, and maintenance services",
 ];
 
+/* ── Mock LLM: Improve caption based on a suggestion ── */
+export function mockLLMImproveCaption({ currentContent, suggestion, channelName, brand, media }) {
+  return new Promise((resolve) => {
+    // Simulate LLM latency (1.5-2.5s)
+    const delay = 1500 + Math.random() * 1000;
+    setTimeout(() => {
+      const brandName = brand?.name || "your business";
+      const personality = brand?.voice?.personality?.[0] || "professional";
+      const tone = brand?.voice?.tone?.[0] || "engaging";
+      const dim = suggestion.dimension;
+      const sentences = currentContent.split(/[.!?]+/).filter(s => s.trim());
+      const firstSentence = sentences[0]?.trim() || "";
+
+      let improved = currentContent;
+
+      if (dim === "voice") {
+        // Rewrite opening to be more engaging, channel-aware
+        if (channelName === "facebook") {
+          improved = `Ever wondered what makes the perfect bite? 🤔 ${sentences.slice(1).join(". ").trim() || currentContent}\n\nWhat's your go-to order? Drop it below! 👇`;
+        } else if (channelName === "instagram") {
+          improved = `This changes everything 🔥👇\n\n${currentContent}`;
+        } else if (channelName === "linkedin") {
+          improved = `Here's what years in the food industry taught us about quality:\n\n${currentContent}\n\nThe lesson? Never compromise on ingredients. Your customers notice.`;
+        } else {
+          improved = `Here's something we're passionate about at ${brandName}:\n\n${currentContent}`;
+        }
+      } else if (dim === "cta") {
+        // Add a strong CTA
+        const ctaMap = {
+          facebook: `\n\n📍 Visit us today — link in comments!\n👉 Book your table now: ${brandName.toLowerCase().replace(/\s/g, "")}.com`,
+          instagram: `\n\n🔗 Link in bio to order now!\n💬 Tag someone who needs to try this`,
+          linkedin: `\n\n→ Learn more about our story: ${brandName.toLowerCase().replace(/\s/g, "")}.com\n#${brandName.replace(/\s/g, "")} #QualityFirst`,
+        };
+        improved = currentContent + (ctaMap[channelName] || `\n\n👉 Learn more at ${brandName.toLowerCase().replace(/\s/g, "")}.com`);
+      } else if (dim === "hashtags") {
+        // Add relevant hashtags
+        const base = brandName.replace(/[^a-zA-Z]/g, "").toLowerCase();
+        const hashtagSets = {
+          facebook: `\n\n#${base} #foodlover #supportlocal`,
+          instagram: `\n\n#${base} #foodie #instafood #foodphotography #eeeeeats #foodstagram #delicious #yummy #foodlover #localfood #supportlocal`,
+          linkedin: `\n\n#${base} #FoodIndustry #SmallBusiness #QualityIngredients #Entrepreneurship`,
+        };
+        improved = currentContent + (hashtagSets[channelName] || `\n\n#${base} #food #quality`);
+      } else if (dim === "structure") {
+        // Improve structure with line breaks and formatting
+        if (!currentContent.includes("\n")) {
+          // Break into paragraphs
+          const mid = Math.floor(sentences.length / 2);
+          improved = sentences.slice(0, mid).join(". ").trim() + ".\n\n" + sentences.slice(mid).join(". ").trim() + ".";
+        } else {
+          improved = currentContent;
+        }
+      }
+
+      resolve(improved);
+    }, delay);
+  });
+}
+
+/* ── Mock LLM: Generate brand scores and suggestions ── */
+export function mockLLMScore({ brand, channelContents, channels, criteria, media }) {
+  // This wraps the deterministic scoring engine but structures the call
+  // as if it were an LLM API call, accepting the full context.
+  // channelContents: { facebook: "...", instagram: "...", ... } or a base string
+  // In production, this payload would be sent to the LLM endpoint.
+  return new Promise((resolve) => {
+    const delay = 1800 + Math.random() * 700;
+    setTimeout(() => {
+      // Import dynamically would be ideal, but for mock we receive the engine function
+      // The caller passes generateScores; we just structure the inputs here
+      resolve({ channelContents, brand, channels, criteria, media });
+    }, delay);
+  });
+}
+
 /* Mock AI generation — simulates content generation with brand awareness */
 export function mockAIGenerate({ mode, prompt, brand, tone, existingContent, briefText, channels }) {
   const brandName = brand?.name || "your business";

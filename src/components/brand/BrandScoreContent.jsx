@@ -1,16 +1,17 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Shield, Palette, Settings, RefreshCw, Plus, Check, ChevronDown, Zap, CheckCircle2 } from 'lucide-react';
+import { Shield, Palette, Settings, RefreshCw, Plus, Check, ChevronDown } from 'lucide-react';
 import T from '../../theme/tokens';
 import ScoreGauge from '../ui/ScoreGauge';
 import Pill from '../ui/Pill';
-import Btn from '../ui/Btn';
 import DimensionAccordion from './DimensionAccordion';
 import CriteriaEditor from './CriteriaEditor';
 import { ChannelIcon } from '../../data/channels';
 import { generateScores } from '../../engine/scoringEngine';
 import { DEFAULT_CRITERIA } from '../../data/scoring';
+import { scorePost, improveCaption, checkHealth } from '../../api/claude';
+import { mockLLMImproveCaption } from '../../data/ai';
 
-export default function BrandScoreContent({ brands, postContent, channels, selectedMedia, onOpenSettings, onApplyContent, onApplyMedia }) {
+export default function BrandScoreContent({ brands, postContent, channels, selectedMedia, onOpenSettings, onApplyContent, onApplyMedia, channelOverrides }) {
   const [selectedBrand, setSelectedBrand] = useState(brands[0]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [scoreData, setScoreData] = useState(null);
@@ -20,15 +21,57 @@ export default function BrandScoreContent({ brands, postContent, channels, selec
   const [criteria, setCriteria] = useState(DEFAULT_CRITERIA);
   const [showCriteriaEditor, setShowCriteriaEditor] = useState(false);
   const [appliedSuggestions, setAppliedSuggestions] = useState({}); // { [suggestionKey]: [channelNames] }
+  const [applyingStates, setApplyingStates] = useState({}); // { [suggestionKey]: "generating" | "verifying" }
+  const [apiError, setApiError] = useState(null); // { code, message }
+  const [apiUsage, setApiUsage] = useState(null); // { used, limit, remaining }
+  const apiAvailable = useRef(false); // true only when backend is reachable AND has a valid API key
 
-  const runScoring = useCallback(() => {
+  // Check backend availability once on mount
+  useEffect(() => {
+    checkHealth().then(h => {
+      apiAvailable.current = h.status === 'ok' && h.hasApiKey;
+      if (h.usage) setApiUsage(h.usage);
+    });
+  }, []);
+
+  // Helper: get effective content for a channel (override > base)
+  const getChannelContent = (ch) => (channelOverrides && channelOverrides[ch]) || postContent;
+
+  const runScoring = useCallback(async () => {
     setLoading(true);
     setVerifyStates({});
-    setTimeout(() => {
-      setScoreData(generateScores(selectedBrand, postContent, channels, criteria, selectedMedia));
-      setLoading(false);
-    }, 2000);
-  }, [selectedBrand, postContent, channels, criteria, selectedMedia]);
+    setAppliedSuggestions({});
+    setApplyingStates({});
+    setApiError(null);
+
+    if (apiAvailable.current) {
+      const channelContents = {};
+      channels.forEach(ch => { channelContents[ch] = getChannelContent(ch); });
+      try {
+        const result = await scorePost({
+          brand: selectedBrand,
+          channelContents,
+          channels,
+          criteria,
+          media: selectedMedia,
+        });
+        setScoreData(result);
+        if (result.usage) setApiUsage(result.usage);
+        setLoading(false);
+        return;
+      } catch (err) {
+        if (err.code === 'daily_limit_exceeded') {
+          setApiError({ code: err.code, message: err.message });
+          if (err.usage) setApiUsage(err.usage);
+        }
+        // Fall through to local engine
+      }
+    }
+
+    // Local deterministic scoring (no API key, or API failed)
+    setScoreData(generateScores(selectedBrand, postContent, channels, criteria, selectedMedia));
+    setLoading(false);
+  }, [selectedBrand, postContent, channels, criteria, selectedMedia, channelOverrides]);
 
   useEffect(() => {
     if (!scoreData) runScoring();
@@ -94,27 +137,82 @@ export default function BrandScoreContent({ brands, postContent, channels, selec
     }, 1200);
   };
 
-  const handleApply = (suggestion, targetChannels) => {
-    if (suggestion.dimension === "media") {
-      // Media suggestion — open media gallery for those channels
-      if (onApplyMedia) onApplyMedia(targetChannels);
-    } else {
-      // Text-based suggestion — generate improved content and apply
-      const exampleText = suggestion.example || suggestion.action || "";
-      if (onApplyContent) onApplyContent(exampleText, targetChannels, suggestion);
-    }
-    // Track which channels this suggestion was applied to
+  const handleApply = async (suggestion, targetChannels) => {
     const key = `${suggestion.dimension}::${suggestion.text}`;
-    setAppliedSuggestions(prev => {
-      const existing = prev[key] || [];
-      const merged = [...new Set([...existing, ...targetChannels])];
-      return { ...prev, [key]: merged };
-    });
+
+    if (suggestion.dimension === "media") {
+      if (onApplyMedia) onApplyMedia(targetChannels);
+      setApplyingStates(prev => ({ ...prev, [key]: "verifying" }));
+      setTimeout(() => {
+        const resolved = selectedMedia && selectedMedia.length > 0;
+        if (resolved) {
+          setAppliedSuggestions(prev => ({ ...prev, [key]: [...new Set([...(prev[key] || []), ...targetChannels])] }));
+        }
+        setApplyingStates(prev => { const n = { ...prev }; delete n[key]; return n; });
+      }, 2000);
+      return;
+    }
+
+    // Text-based suggestion — generate improved caption
+    setApplyingStates(prev => ({ ...prev, [key]: "generating" }));
+
+    try {
+      for (const ch of targetChannels) {
+        const currentContent = getChannelContent(ch);
+        let improvedCaption;
+
+        if (apiAvailable.current) {
+          // Real Claude API call
+          const result = await improveCaption({
+            currentContent,
+            suggestion,
+            channelName: ch,
+            brand: selectedBrand,
+            media: selectedMedia,
+          });
+          if (result.usage) setApiUsage(result.usage);
+          improvedCaption = result.caption;
+        } else {
+          // Local mock fallback
+          improvedCaption = await mockLLMImproveCaption({
+            currentContent,
+            suggestion,
+            channelName: ch,
+            brand: selectedBrand,
+            media: selectedMedia,
+          });
+        }
+
+        if (onApplyContent) onApplyContent(improvedCaption, [ch], suggestion);
+      }
+
+      // Verify
+      setApplyingStates(prev => ({ ...prev, [key]: "verifying" }));
+      setTimeout(() => {
+        setAppliedSuggestions(prev => ({
+          ...prev,
+          [key]: [...new Set([...(prev[key] || []), ...targetChannels])],
+        }));
+        setApplyingStates(prev => { const n = { ...prev }; delete n[key]; return n; });
+      }, 800);
+    } catch (err) {
+      if (err.code === 'daily_limit_exceeded') {
+        setApiError({ code: err.code, message: err.message });
+        if (err.usage) setApiUsage(err.usage);
+      }
+      // Reset applying state — CTA goes back to "Apply"
+      setApplyingStates(prev => { const n = { ...prev }; delete n[key]; return n; });
+    }
   };
 
   const getAppliedChannels = (suggestion) => {
     const key = `${suggestion.dimension}::${suggestion.text}`;
     return appliedSuggestions[key] || [];
+  };
+
+  const getApplyingState = (suggestion) => {
+    const key = `${suggestion.dimension}::${suggestion.text}`;
+    return applyingStates[key] || null; // "generating" | "verifying" | null
   };
 
   const actionable = allSuggestions.filter(s => s.type !== "positive");
@@ -212,6 +310,32 @@ export default function BrandScoreContent({ brands, postContent, channels, selec
             </div>
           )}
 
+          {/* API error banner */}
+          {apiError && (
+            <div style={{ padding: "10px 12px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: T.radiusSm, display: "flex", alignItems: "flex-start", gap: "8px" }}>
+              <span style={{ fontSize: "14px", flexShrink: 0, marginTop: "1px" }}>⚠️</span>
+              <div>
+                <p style={{ fontSize: "12px", color: "#991B1B", fontWeight: 600, margin: "0 0 2px" }}>
+                  {apiError.code === 'daily_limit_exceeded' ? 'Daily API limit reached' : 'API Error'}
+                </p>
+                <p style={{ fontSize: "11px", color: "#B91C1C", margin: 0, lineHeight: "15px" }}>
+                  {apiError.message}
+                  {apiError.code === 'daily_limit_exceeded' && ' Using offline scoring as fallback.'}
+                </p>
+              </div>
+              <button onClick={() => setApiError(null)} style={{ background: "none", border: "none", cursor: "pointer", padding: "2px", marginLeft: "auto", flexShrink: 0, fontSize: "12px", color: "#991B1B" }}>✕</button>
+            </div>
+          )}
+
+          {/* API usage indicator */}
+          {apiUsage && !apiError && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "4px" }}>
+              <span style={{ fontSize: "10px", color: apiUsage.remaining <= 5 ? T.yellow : T.gray400 }}>
+                API: {apiUsage.remaining}/{apiUsage.limit} calls remaining today
+              </span>
+            </div>
+          )}
+
           {/* Results */}
           {!loading && scoreData && (
             <>
@@ -243,16 +367,11 @@ export default function BrandScoreContent({ brands, postContent, channels, selec
                     suggestions={allSuggestions.filter(s => s.dimension === c.id)}
                     verifyStates={verifyStates} onVerify={handleVerify}
                     onApply={handleApply} channelFilter={channelFilter}
-                    getAppliedChannels={getAppliedChannels} />
+                    getAppliedChannels={getAppliedChannels}
+                    getApplyingState={getApplyingState} />
                 ))}
               </div>
 
-              {/* Verify all */}
-              {resolvedCount < actionable.length && (
-                <Btn variant="primary" style={{ width: "100%" }} onClick={() => actionable.forEach(s => { if (verifyStates[s.id] !== "resolved") handleVerify(s.id); })}>
-                  <Zap size={14} /> Verify All Suggestions
-                </Btn>
-              )}
             </>
           )}
         </div>

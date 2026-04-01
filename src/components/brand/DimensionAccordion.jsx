@@ -4,7 +4,7 @@ import T from '../../theme/tokens';
 import ScoreBar from '../ui/ScoreBar';
 import SuggestionCard from '../ui/SuggestionCard';
 
-export default function DimensionAccordion({ criterion, score, suggestions, verifyStates, onVerify, onApply, channelFilter, getAppliedChannels }) {
+export default function DimensionAccordion({ criterion, score, suggestions, verifyStates, onVerify, onApply, channelFilter, getAppliedChannels, getApplyingState }) {
   const [exp, setExp] = useState(score < 70);
   const color = score >= 80 ? T.green : score >= 60 ? T.yellow : T.red;
   const resolvedCount = suggestions.filter(s => verifyStates[s.id] === "resolved").length;
@@ -31,7 +31,8 @@ export default function DimensionAccordion({ criterion, score, suggestions, veri
           {suggestions.map(s => (
             <SuggestionCard key={s.id} s={s} verifyState={verifyStates[s.id]} onVerify={onVerify}
               onApply={onApply} channelFilter={channelFilter}
-              appliedChannels={getAppliedChannels ? getAppliedChannels(s) : []} />
+              appliedChannels={getAppliedChannels ? getAppliedChannels(s) : []}
+              applyingState={getApplyingState ? getApplyingState(s) : null} />
           ))}
         </div>
       )}
